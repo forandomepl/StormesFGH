@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.yml'
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
+jobs:
+  cargo-deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'Cargo.lock'
+
+      - name: Install cargo-deny
+        if: steps.filter.outputs.src == 'true'
+        uses: taiki-e/install-action@cargo-deny
+
+      - if: steps.filter.outputs.src == 'true'
+        run: cargo deny check
+
+  rust-validation:
+    name: Rust Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: moonrepo/setup-rust@v1
+        with:
+          bins: just, taplo-cli
+          cache-base: main
+          components: clippy,rustfmt
+
+      - name: Lint
+        run: just lint-rust
+
+  cargo-test:
+    name: Cargo Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: moonrepo/setup-rust@v1
+        with:
+          bins: just
+          cache-base: main
+
+      - name: Build
+        run: cargo test --no-run
+
+      - name: Run Test
+        run: just test-rust
+
+  node-test:
+    name: Node Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          # - windows-latest
+          # - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true # Pull submodules for additional files
+
+      - name: Install Rust
+        uses: moonrepo/setup-rust@v1
+        with:
+          bins: just
+          cache-base: main
+
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build
+        run: yarn build:node
+
+      - name: Type Check
+        run: yarn type-check
+
+      - name: Run Test
+        run: yarn test
+
+  node-validation:
+    name: Node Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Oxc Lint
+        run: yarn lint-code
+
+      - name: Lint Filename
+        run: yarn lint-filename
+
+      - name: Run format check
+        run: yarn format:ci
